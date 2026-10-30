@@ -1106,6 +1106,22 @@ start_server {tags {"introspection"}} {
         $rd close
     } {0} {needs:repl}
 
+    test {MONITOR redacts credentials of rejected commands} {
+        set rd [valkey_deferring_client]
+        $rd monitor
+        $rd read ; # Discard the OK
+
+        catch {r hello 4 AUTH not-real not-a-password} _
+        catch {r hello 3 AUTH not-a-password} _
+        catch {r auth not-real not-a-password extra} _
+        catch {r migrate [srv 0 host] [srv 0 port] key 9 5000 bogus AUTH not-a-password} _
+
+        for {set i 0} {$i < 4} {incr i} {
+            assert_no_match {*not-a-password*} [$rd read]
+        }
+        $rd close
+    } {0} {needs:repl}
+
     test {MONITOR correctly handles multi-exec cases} {
         set rd [valkey_deferring_client]
         $rd monitor
@@ -1664,7 +1680,7 @@ start_server {tags {"introspection"}} {
                 # Get the tot-net-out of the replica before sending the command.
                 set info_list [$primary client list]
                 foreach info [split $info_list "\r\n"] {
-                    if {[string match "* flags=S *" $info]} {
+                    if {[string match "* flags=*S* *" $info]} {
                         set out_before [get_field_in_client_info $info "tot-net-out"]
                         break
                     }
@@ -1677,7 +1693,7 @@ start_server {tags {"introspection"}} {
                 # Get the tot-net-out of the replica after sending the command.
                 set info_list [$primary client list]
                 foreach info [split $info_list "\r\n"] {
-                    if {[string match "* flags=S *" $info]} {
+                    if {[string match "* flags=*S* *" $info]} {
                         set out_after [get_field_in_client_info $info "tot-net-out"]
                         break
                     }
@@ -2063,6 +2079,18 @@ test {CONFIG REWRITE handles large unsigned memory config values} {
 
         assert_equal [lindex [r config get maxmemory] 1] 9223372036854775808
         assert_equal [lindex [r config get maxmemory-clients] 1] 100%
+    }
+} {} {external:skip}
+
+test {CONFIG REWRITE keeps a replicaof host with a newline on one line} {
+    start_server {tags {"introspection"}} {
+        set host "127.0.0.1 1\nmaxmemory 1234567\n#"
+        r replicaof $host 1
+
+        r config rewrite
+        restart_server 0 true false
+
+        assert_equal [lindex [r config get replicaof] 1] "$host 1"
     }
 } {} {external:skip}
 
